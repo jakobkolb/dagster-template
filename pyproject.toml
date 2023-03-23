@@ -1,0 +1,39 @@
+[tool.poetry]
+name = "dagster-poc"
+version = "0.1.0"
+description = ""
+authors = ["Jakob J. Kolb <jakob.j.kolb@gmail.com>"]
+readme = "README.md"
+packages = [{include = "dagster_poc"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+dagster = "^1.2.2"
+dagit = "^1.2.2"
+pandas = "^1.5.3"
+ramda = "^0.7.6"
+requests = "^2.28.2"
+matplotlib = "^3.7.1"
+wordcloud = "^1.8.2.2"
+dagster-duckdb = "^0.18.2"
+dagster-duckdb-pandas = "^0.18.2"
+
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.2.2"
+pytest-xdist = "^3.2.1"
+black = "^23.1.0"
+flake8 = "^6.0.0"
+flake8-pyproject = "^1.2.3"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.dagster]
+module_name = "dagster_poc"
+
+[tool.flake8]
+max-line-length = 120
+exclude = ".git,__pycache__,.venv,.eggs,*.egg,build,dist,venv"
+
