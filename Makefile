@@ -11,4 +11,4 @@ lint:
 	poetry run flake8 && poetry run black . --check
 
 build:
-	docker build -f docker/Dockerfile . -t dagster-poc:dev --progress=plain
+	docker build -f docker/Dockerfile . --progress=plain -t $(tag)

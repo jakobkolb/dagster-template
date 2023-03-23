@@ -1,5 +1,5 @@
 import requests
-from dagster import asset, AssetIn, MetadataValue, Output
+from dagster import asset, AssetIn, MetadataValue, Output, Definitions
 import pandas as pd
 import ramda as R
 from wordcloud import WordCloud, STOPWORDS
@@ -61,3 +61,7 @@ def topstories_word_cloud(stories):
     md_content = f" ![img](data:image/png;base64,{image_data.decode()})"
 
     return Output(value=image_data, metadata={"plot": MetadataValue.md(md_content)})
+
+
+# This is needed to deploy these assets in production.
+definitions = Definitions([top_stories_ids, top_stories, topstories_word_cloud])
