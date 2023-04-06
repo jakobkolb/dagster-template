@@ -53,6 +53,7 @@ pipeline {
         stage('Setup'){
             steps {
                 sh 'poetry --version'
+                sh 'git config --global http.sslVerify false'
                 // Checkout the code
                 checkout scm
                 // Install dependencies

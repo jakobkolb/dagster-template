@@ -1,3 +1,7 @@
+#!make
+-include .env
+export $(shell sed 's/=.*//' .env)
+
 install:
 	poetry install
 
@@ -6,6 +10,9 @@ dev:
 
 test:
 	poetry run pytest
+
+watch:
+	poetry run pytest -f -ff
 
 lint:
 	poetry run flake8 && poetry run black . --check
