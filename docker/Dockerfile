@@ -9,9 +9,6 @@ COPY poetry.lock pyproject.toml README.md ./
 
 RUN poetry install --only main --no-interaction --no-ansi --no-root
 
-# these dependencies are needed to run dagster in k8s
-RUN poetry add dagster-graphql dagster-postgres dagster-k8s
-
 # delete poetry cache
 RUN rm -rf /root/.cache/pypoetry
 
