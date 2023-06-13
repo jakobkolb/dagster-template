@@ -44,7 +44,7 @@ pipeline {
                         value: harbor-dev.tkpoc.it32.labor
                       resources:
                         requests:
-                          ephemeral-storage: 1Gi
+                          ephemeral-storage: 2Gi
                     restartPolicy: Never
                 """
             }
