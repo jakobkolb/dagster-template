@@ -87,7 +87,7 @@ pipeline {
                             /kaniko/executor \
                             --dockerfile=docker/Dockerfile \
                             --context=dir://. \
-                            --destination=$HARBOR_HOST/devops/dagster-poc-bitbucket:latest \
+                            --destination=$HARBOR_HOST/devops/dagster-matsuoka:latest \
                             --skip-tls-verify-registry=$HARBOR_HOST \
                             --build-arg "http_proxy=$HTTP_PROXY" \
                             --build-arg "https_proxy=$HTTPS_PROXY" \
