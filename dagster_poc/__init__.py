@@ -1,4 +1,1 @@
-from dagster import load_assets_from_modules
-from dagster_poc import assets
-
-assets = load_assets_from_modules([assets])
+from dagster_poc.jobs import defs as jobs_defs

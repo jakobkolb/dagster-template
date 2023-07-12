@@ -6,13 +6,14 @@ install:
 	poetry install
 
 dev:
+	docker compose up -d
 	poetry run dagster dev
 
 test:
 	poetry run pytest
 
 watch:
-	poetry run pytest -f -ff
+	poetry run ptw
 
 lint:
 	poetry run flake8 && poetry run black . --check

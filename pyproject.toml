@@ -6,6 +6,9 @@ authors = ["Jakob J. Kolb <jakob.j.kolb@gmail.com>"]
 readme = "README.md"
 packages = [{include = "dagster_poc"}]
 
+[tool.dagster]
+module_name = "dagster_poc"
+
 [tool.poetry.dependencies]
 python = "^3.9"
 dagster = "^1.2.2"
@@ -21,21 +24,21 @@ dagster-postgres = "^0.19.9"
 dagster-k8s = "^0.19.9"
 dagster-duckdb-pandas = "^0.19.9"
 dagster-duckdb = "^0.19.9"
+pyodbc = "^4.0.39"
+pymssql = "^2.2.7"
 
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.2.2"
-pytest-xdist = "^3.2.1"
 black = "^23.1.0"
 flake8 = "^6.0.0"
 flake8-pyproject = "^1.2.3"
+pytest-watch = "^4.2.0"
+pytest-xdist = "^3.3.1"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
-
-[tool.dagster]
-module_name = "dagster_poc"
 
 [tool.flake8]
 max-line-length = 120

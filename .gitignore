@@ -1,4 +1,15 @@
 tmp*
 .idea
-.pytest_cache
 .env
+
+# ignore __pycache__ directories
+__pycache__/
+
+# ignore .venv directory
+.venv/
+
+# ignore .pytest_cache directory
+.pytest_cache/
+
+# ignore dagster home directory
+.dagster_home/
