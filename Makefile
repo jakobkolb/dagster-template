@@ -20,3 +20,6 @@ lint:
 
 build:
 	docker build -f docker/Dockerfile . --progress=plain -t $(tag)
+
+this:
+	poetry run ptw -- -- -k $(test) -vvv

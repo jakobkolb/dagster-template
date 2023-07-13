@@ -1,5 +1,4 @@
 from dagster import EnvVar, Definitions, asset, AssetIn, Output, AssetKey
-from dagster_duckdb_pandas import DuckDBPandasIOManager
 from typing import List
 from dagster_poc.utils.database import (
     read_tracked_table_metadata,
@@ -20,8 +19,29 @@ from dagster_poc.utils.types import (
 )
 
 
+# @asset
+# def update_source_table(source_db: DatabaseConnection) -> Output[int]:
+#
+#     # get last id from source table
+#     nint = source_db.query("SELECT MAX(id) FROM common.change_data")[0][0] + 1
+#
+#     # insert a row into the source table
+#     source_db.insert(
+#         f"""
+#         INSERT INTO common.change_data (id, name) VALUES ({nint}, 'test_{nint}')
+#         """
+#     )
+#     # trigger CDC
+#     source_db.insert(f"EXEC sys.sp_cdc_scan")
+#
+#     return Output(nint, metadata={"source_table_update": nint})
+
+
 @asset()
-def tracked_tables_at_origin_db(source_db: DatabaseConnection) -> List[Table]:
+def tracked_tables_at_origin_db(
+        source_db: DatabaseConnection,
+        # update_source_table
+) -> List[Table]:
     """
     Change change_data table from origin.
     """
@@ -32,15 +52,15 @@ def tracked_tables_at_origin_db(source_db: DatabaseConnection) -> List[Table]:
         return discover_tracked_tables(connection, db_name)
 
 
-@asset(ins={"tracked_tables": AssetIn(key="tracked_tables_at_origin_db")})
+@asset()
 def metadata_of_tracked_tables(
-    source_db: DatabaseConnection, tracked_tables: List[Table]
+    source_db: DatabaseConnection, tracked_tables_at_origin_db: List[Table]
 ) -> List[TrackedTableMetadata]:
     """
     Log sequence numbers of tracked tables.
     """
     metadata = []
-    for table in tracked_tables:
+    for table in tracked_tables_at_origin_db:
         metadata.append(read_tracked_table_metadata(source_db, table))
     return metadata
 
@@ -59,6 +79,8 @@ def change_data_records_of_tracked_tables(
             next_min_lsn = get_next_lsn(source_db, encode_lsn(last_synced_lsn))
             if next_min_lsn <= metadata.lsn_range.max_lsn:
                 metadata.lsn_range.min_lsn = next_min_lsn
+                print(f"Changes for table {metadata.table.name}")
+                print(f"between {decode_lsn(next_min_lsn)} and {decode_lsn(metadata.lsn_range.max_lsn)}")
             else:
                 print(f"No changes for table {metadata.table.name}")
                 metadata.lsn_range.min_lsn = metadata.lsn_range.max_lsn
@@ -81,20 +103,29 @@ def updated_sync_state(
         try:
             sql_changes = construct_sql_changes(change)
             insert_sql_change_data(target_db, sql_changes)
+            print('synchronizing changes done.')
             table_sync_status[change.table_metadata.table.name] = TableSyncStatus(
                 table=change.table_metadata.table.dict(),
                 last_sync_success=True,
+                synchronized_inserts=len(sql_changes["insert"].change_data),
+                synchronized_updates=len(sql_changes["update"].change_data),
+                synchronized_deletes=len(sql_changes["delete"].change_data),
                 last_sync_error=None,
                 last_synced_lsn=decode_lsn(change.table_metadata.lsn_range.max_lsn),
             ).dict()
+            print('creating sync status done.')
         except Exception as e:
             table_sync_status[change.table_metadata.table.name] = TableSyncStatus(
                 table=change.table_metadata.table.dict(),
                 last_sync_success=False,
+                synchronized_inserts=0,
+                synchronized_updates=0,
+                synchronized_deletes=0,
                 last_sync_error=str(e),
                 last_synced_lsn=last_synced_lsn,
             ).dict()
-    return Output(value=None, metadata={"table_sync_status": table_sync_status})
+        max_synced_lsn = decode_lsn(change.table_metadata.lsn_range.max_lsn)
+    return Output(value=None, metadata={"table_sync_status": table_sync_status, "last_lsn": max_synced_lsn})
 
 
 def get_last_synced_lsn_for_table(table_sync_status, table_metadata):
@@ -126,7 +157,15 @@ resources = {
         connection_string=EnvVar("TARGET_DB_CONNECTION_STRING"),
         db_name=EnvVar("TARGET_DB_NAME"),
     ),
-    "io_manager": DuckDBPandasIOManager(database="memory.db"),
 }
 
-defs = Definitions(resources=resources, assets=[tracked_tables_at_origin_db])
+defs = Definitions(
+    resources=resources,
+    assets=[
+        # update_source_table,
+        tracked_tables_at_origin_db,
+        metadata_of_tracked_tables,
+        change_data_records_of_tracked_tables,
+        updated_sync_state,
+    ]
+)

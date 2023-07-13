@@ -89,7 +89,7 @@ def read_net_change_data_capture_for_table(
 ) -> Changes:
     # read net changes to the source table
     query = f"""
-            SELECT * FROM cdc.fn_cdc_get_net_changes_{tracked_table_metadata.table.db_schema}_{tracked_table_metadata.table.name} (:min_lsn, :max_lsn, 'all')
+            SELECT * FROM cdc.fn_cdc_get_net_changes_{tracked_table_metadata.table.db_schema}_{tracked_table_metadata.table.name} (:min_lsn, :max_lsn, 'all with mask')
             """
     params = {
         "min_lsn": tracked_table_metadata.lsn_range.min_lsn,
@@ -131,10 +131,10 @@ def construct_update_statement(changes: Changes) -> str:
     schema = changes.table_metadata.table_schema
 
     table_name = f"{table.db_schema}.{table.name}"
-    columns = ", ".join(schema.columns)
-    placeholders = ", ".join([f":{c}" for c in schema.columns])
+    update_statements = ", ".join([f"{c} = :{c}" for c in schema.columns])
+    conditions = " AND ".join([f"{c} = :{c}" for c in schema.columns])
 
-    return f"UPDATE {table_name} SET ({columns}) = ({placeholders}) WHERE {columns} = {placeholders}"
+    return f"UPDATE {table_name} SET {update_statements} WHERE {conditions}"
 
 
 def construct_delete_statement(changes: Changes) -> str:
@@ -142,10 +142,9 @@ def construct_delete_statement(changes: Changes) -> str:
     schema = changes.table_metadata.table_schema
 
     table_name = f"{table.db_schema}.{table.name}"
-    columns = ", ".join(schema.columns)
-    placeholders = ", ".join([f":{c}" for c in schema.columns])
+    conditions = " AND ".join([f"{c} = :{c}" for c in schema.columns])
 
-    return f"DELETE FROM {table_name} WHERE {columns} = {placeholders}"
+    return f"DELETE FROM {table_name} WHERE {conditions}"
 
 
 def construct_insert_statement(changes: Changes) -> str:
@@ -176,6 +175,7 @@ def filter_change_data_for_operation(operation: DML, changes: Changes) -> dict:
     data = pd.DataFrame(changes.changes, columns=columns)
 
     insert_data = data[data["operation"] == operation.value]
+    print(insert_data)
     insert_data = insert_data.drop(columns=["start_lsn", "operation", "update_mask"])
     return insert_data.to_dict(orient="records")
 
@@ -186,6 +186,8 @@ def insert_sql_change_data(
     for operation, changes in sql_changes.items():
         if len(changes.change_data) > 0:
             connection.insert(changes.sql, changes.change_data)
+            print(f"Found {len(changes.change_data)} {operation} changes")
+            print(changes.change_data)
         else:
             print(f"No {operation} changes for {changes}")
 

@@ -1,4 +1,4 @@
-from typing import List, Any, Union
+from typing import List, Any, Union, TypedDict
 
 import sqlalchemy
 
@@ -21,6 +21,9 @@ class Table(BaseModel):
 class TableSyncStatus(BaseModel):
     table: Table
     last_sync_success: bool
+    synchronized_inserts: int
+    synchronized_updates: int
+    synchronized_deletes: int
     last_sync_error: str | None
     last_synced_lsn: int | None
 
@@ -73,3 +76,14 @@ class DatabaseConnection(ConfigurableResource):
                     return res.fetchall()
                 except ResourceClosedError:
                     return None
+
+
+class Resources(TypedDict):
+    source_db: DatabaseConnection
+    target_db: DatabaseConnection
+
+
+class TestContext(BaseModel):
+    source_db: DatabaseConnection
+    target_db: DatabaseConnection
+    tables: dict[str, Table]
