@@ -64,7 +64,7 @@ def load_lsn_range_for_table(connection: DatabaseConnection, table: Table) -> Ls
     min_lsn = connection.query(
         f"SELECT sys.fn_cdc_get_min_lsn ('{table.db_schema}_{table.name}')"
     )[0][0]
-    max_lsn = connection.query(f"SELECT sys.fn_cdc_get_max_lsn ()")[0][0]
+    max_lsn = connection.query("SELECT sys.fn_cdc_get_max_lsn ()")[0][0]
     return LsnRange(min_lsn=min_lsn, max_lsn=max_lsn)
 
 
@@ -72,10 +72,10 @@ def discover_tracked_tables(connection, db_name: str) -> List[Table]:
     connection.execute(f"USE {db_name}")
 
     res = connection.execute(
-        f"""SELECT tables.name, schemas.name 
-            FROM sys.tables tables, sys.schemas schemas 
+        """SELECT tables.name, schemas.name
+            FROM sys.tables tables, sys.schemas schemas
             WHERE tables.is_tracked_by_cdc = 1 AND tables.schema_id = schemas.schema_id
-            """
+        """
     )
 
     return [Table(name=r[0], db_schema=r[1]) for r in res]
@@ -97,11 +97,11 @@ def read_tracked_table_metadata(
 
 def get_next_lsn(connection: DatabaseConnection, lsn: bytes) -> bytes:
     return connection.query(
-        f"""
-            SELECT sys.fn_cdc_increment_lsn (:lsn)
-        """,
+        "SELECT sys.fn_cdc_increment_lsn (:lsn)",
         {"lsn": lsn},
-    )[0][0]
+    )[
+        0
+    ][0]
 
 
 def read_net_change_data_capture_for_table(
@@ -109,7 +109,11 @@ def read_net_change_data_capture_for_table(
 ) -> Changes:
     # read net changes to the source table
     query = f"""
-            SELECT * FROM cdc.fn_cdc_get_net_changes_{tracked_table_metadata.table.db_schema}_{tracked_table_metadata.table.name} (:min_lsn, :max_lsn, 'all with mask')
+            SELECT
+                *
+            FROM
+                cdc.fn_cdc_get_net_changes_{tracked_table_metadata.table.db_schema}_{tracked_table_metadata.table.name}
+                (:min_lsn, :max_lsn, 'all with mask')
             """
     params = {
         "min_lsn": tracked_table_metadata.lsn_range.min_lsn,

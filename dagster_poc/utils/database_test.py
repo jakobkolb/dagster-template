@@ -72,7 +72,7 @@ def test_read_lsn_range_returns_lsn_range_when_changes_have_been_made(db_context
     connection.insert(f"INSERT INTO {table.db_schema}.{table.name} VALUES (1, 'test')")
 
     # trigger change change_data capture job manually
-    connection.insert(f"EXEC sys.sp_cdc_scan")
+    connection.insert("EXEC sys.sp_cdc_scan")
 
     lsn_range = load_lsn_range_for_table(connection, table)
 
@@ -137,7 +137,7 @@ def test_get_next_lsn_returns_correct_lsn(db_context):
 
     # add some change_data to the source table
     connection.insert(f"INSERT INTO {table.db_schema}.{table.name} VALUES (1, 'test')")
-    connection.insert(f"EXEC sys.sp_cdc_scan")
+    connection.insert("EXEC sys.sp_cdc_scan")
 
     # load lsn range
     lsn_range = load_lsn_range_for_table(connection, table)
@@ -160,7 +160,7 @@ def test_read_change_data_capture_from_source_db(db_context):
     connection.insert(f"INSERT INTO {table.db_schema}.{table.name} VALUES (1, 'test')")
 
     # trigger change change_data capture job manually
-    connection.insert(f"EXEC sys.sp_cdc_scan")
+    connection.insert("EXEC sys.sp_cdc_scan")
 
     tracked_table_metadata = TrackedTableMetadata(
         table=table,
@@ -303,7 +303,7 @@ def test_construct_and_execute_sql_change_data_syncs_db(db_context):
     )
 
     # trigger change change_data capture job manually
-    source_connection.insert(f"EXEC sys.sp_cdc_scan")
+    source_connection.insert("EXEC sys.sp_cdc_scan")
 
     # read change change_data capture from source db
     tracked_table_metadata = read_tracked_table_metadata(source_connection, source)
@@ -340,7 +340,7 @@ def test_increment_lsn_range_returns_lsn_range_that_includes_only_new_changes(
     )
 
     # trigger change change_data capture job manually
-    source_connection.insert(f"EXEC sys.sp_cdc_scan")
+    source_connection.insert("EXEC sys.sp_cdc_scan")
 
     # read metadata from source db
     tracked_table_metadata = read_tracked_table_metadata(source_connection, source)
@@ -351,7 +351,7 @@ def test_increment_lsn_range_returns_lsn_range_that_includes_only_new_changes(
     )
 
     # trigger change change_data capture job manually
-    source_connection.insert(f"EXEC sys.sp_cdc_scan")
+    source_connection.insert("EXEC sys.sp_cdc_scan")
 
     # increment the max_lsn of the tracked_table_metadata by one
     new_min_lsn = get_next_lsn(
@@ -385,7 +385,7 @@ def test_construct_sql_change_data_for_delete(db_context):
     )
 
     # trigger change change_data capture job manually
-    source_connection.insert(f"EXEC sys.sp_cdc_scan")
+    source_connection.insert("EXEC sys.sp_cdc_scan")
     sleep(1)
 
     old_tracked_table_metadata = read_tracked_table_metadata(source_connection, source)
@@ -396,7 +396,7 @@ def test_construct_sql_change_data_for_delete(db_context):
     )
 
     # trigger change change_data capture job manually
-    source_connection.insert(f"EXEC sys.sp_cdc_scan")
+    source_connection.insert("EXEC sys.sp_cdc_scan")
     sleep(1)
 
     # read metadata from source db

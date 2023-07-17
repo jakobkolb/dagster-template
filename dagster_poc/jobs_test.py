@@ -11,7 +11,7 @@ from sqlalchemy.engine import Engine
 from time import sleep
 
 
-def test_tracked_tables_at_origin_returns_tracked_tables(
+def test_names_of_tables_with_cdc_enabled_returns_tracked_tables(
     database: Engine, tables: dict
 ):
     connection_string = str(database.url)
@@ -24,7 +24,7 @@ def test_tracked_tables_at_origin_returns_tracked_tables(
 
     result = materialize([names_of_tables_with_cdc_enabled], resources=resources)
     assert result.success
-    assert result.output_for_node("tracked_tables_at_origin_db") == [
+    assert result.output_for_node("names_of_tables_with_cdc_enabled") == [
         Table(name="change_data", db_schema="common")
     ]
 
@@ -116,7 +116,7 @@ def test_repeated_db_sync(
     )
 
     # trigger cdc scan
-    resources["source_db"].insert(f"EXEC sys.sp_cdc_scan")
+    resources["source_db"].insert("EXEC sys.sp_cdc_scan")
 
     # run sync
     sync(resources, source_table, target_table)
@@ -135,7 +135,7 @@ def test_db_sync_with_deleted_rows(
     )
 
     # trigger cdc scan
-    resources["source_db"].insert(f"EXEC sys.sp_cdc_scan")
+    resources["source_db"].insert("EXEC sys.sp_cdc_scan")
     sleep(1)
 
     # run sync
@@ -153,7 +153,7 @@ def test_db_sync_with_deleted_rows(
     )
 
     # trigger cdc scan
-    resources["source_db"].insert(f"EXEC sys.sp_cdc_scan")
+    resources["source_db"].insert("EXEC sys.sp_cdc_scan")
     sleep(1)
 
     print("sync second round of changes")
@@ -177,7 +177,7 @@ def test_db_sync_with_updated_rows(
     )
 
     # trigger cdc scan
-    resources["source_db"].insert(f"EXEC sys.sp_cdc_scan")
+    resources["source_db"].insert("EXEC sys.sp_cdc_scan")
     sleep(1)
 
     # run sync
@@ -195,7 +195,7 @@ def test_db_sync_with_updated_rows(
     )
 
     # trigger cdc scan
-    resources["source_db"].insert(f"EXEC sys.sp_cdc_scan")
+    resources["source_db"].insert("EXEC sys.sp_cdc_scan")
     sleep(1)
 
     print("sync second round of changes")
@@ -261,5 +261,5 @@ def prepare_db(resources: Resources, source_table: Table):
     ) == [(1, "test")]
 
     # trigger cdc scan
-    database.insert(f"EXEC sys.sp_cdc_scan")
+    database.insert("EXEC sys.sp_cdc_scan")
     sleep(2)

@@ -32,7 +32,13 @@ def database(tables):
         engine.execute(f'USE {tables["source"]["db_name"]}')
         engine.execute("EXEC sys.sp_cdc_enable_db")
         engine.execute(
-            "EXEC sys.sp_cdc_enable_table @source_schema = N'common', @source_name = N'change_data', @role_name = NULL, @supports_net_changes = 1"
+            """EXEC
+                sys.sp_cdc_enable_table
+                @source_schema = N'common',
+                @source_name = N'change_data',
+                @role_name = NULL,
+                @supports_net_changes = 1
+            """
         )
         yield engine
     finally:

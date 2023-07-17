@@ -24,6 +24,26 @@ pipeline {
                         value: http://10.15.156.29:8020
                       - name: NO_PROXY
                         value: localhost
+                      - name: SOURCE_DB_CONNECTION_STRING
+                        value: mssql+pymssql://sa:Password123@localhost:1433
+                      - name: TARGET_DB_CONNECTION_STRING
+                        value: mssql+pymssql://sa:Password123@localhost:1433
+                      - name: SOURCE_DB_NAME
+                        value: source
+                      - name: TARGET_DB_NAME
+                        value: target
+                      resources:
+                        requests:
+                          ephemeral-storage: 1Gi
+                    - name: sqlserver
+                      image: mcr.microsoft.com/mssql/server:2019-latest
+                      env:
+                      - name: ACCEPT_EULA
+                        value: Y
+                      - name: MSSQL_SA_PASSWORD
+                        value: Password123
+                      ports:
+                        - containerPort: 1433
                       resources:
                         requests:
                           ephemeral-storage: 1Gi
