@@ -19,7 +19,6 @@ def tables() -> Tables:
 
 @pytest.fixture()
 def database(tables):
-
     # create a source_db for the tests
     engine = sqlalchemy.create_engine(
         "mssql+pymssql://sa:Password123@localhost:1433",
@@ -51,9 +50,7 @@ def prepare_database(engine, db_name: str, table_name: str):
     # Force kill all connections to source_db db_name
     # https://stackoverflow.com/a/20688603
     try:
-        engine.execute(
-            f"ALTER DATABASE {db_name} SET OFFLINE WITH ROLLBACK IMMEDIATE"
-        )
+        engine.execute(f"ALTER DATABASE {db_name} SET OFFLINE WITH ROLLBACK IMMEDIATE")
         engine.execute(f"ALTER DATABASE {db_name} SET ONLINE")
     except sqlalchemy.exc.OperationalError:
         pass
@@ -65,9 +62,7 @@ def prepare_database(engine, db_name: str, table_name: str):
     # Create the table in the source_db
     engine.execute(f"USE {db_name}")
     engine.execute("CREATE SCHEMA common")
-    engine.execute(
-        f"CREATE TABLE {table_name} (id INT PRIMARY KEY, name VARCHAR(50))"
-    )
+    engine.execute(f"CREATE TABLE {table_name} (id INT PRIMARY KEY, name VARCHAR(50))")
 
     engine.execute("USE master")
 

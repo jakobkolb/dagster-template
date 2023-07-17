@@ -37,6 +37,7 @@ class TrackedTableMetadata(BaseModel):
     table: Table
     table_schema: Schema
     lsn_range: LsnRange
+    primary_key: List[str]
 
 
 class Changes(BaseModel):

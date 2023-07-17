@@ -44,6 +44,22 @@ def read_database_schema(
             return Schema(columns=columns, types=types)
 
 
+def read_primary_key(
+    database_connection: DatabaseConnection, table: Table
+) -> List[str]:
+    """
+    Reads the primary key for the given table.
+    """
+    res = database_connection.query(
+        f"""
+        SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE
+        OBJECTPROPERTY(OBJECT_ID(CONSTRAINT_SCHEMA + '.' + QUOTENAME(CONSTRAINT_NAME)), 'IsPrimaryKey') = 1
+        AND TABLE_SCHEMA = '{table.db_schema}' AND TABLE_NAME = '{table.name}'
+        """
+    )
+    return [r[0] for r in res]
+
+
 def load_lsn_range_for_table(connection: DatabaseConnection, table: Table) -> LsnRange:
     min_lsn = connection.query(
         f"SELECT sys.fn_cdc_get_min_lsn ('{table.db_schema}_{table.name}')"
@@ -70,8 +86,12 @@ def read_tracked_table_metadata(
 ) -> TrackedTableMetadata:
     lsn_range = load_lsn_range_for_table(connection, table)
     table_schema = read_database_schema(connection, table)
+    primary_key = read_primary_key(connection, table)
     return TrackedTableMetadata(
-        table=table, lsn_range=lsn_range, table_schema=table_schema
+        table=table,
+        lsn_range=lsn_range,
+        table_schema=table_schema,
+        primary_key=primary_key,
     )
 
 
@@ -129,10 +149,14 @@ def construct_sql_changes(changes: Changes) -> dict[str, SQLChanges]:
 def construct_update_statement(changes: Changes) -> str:
     table = changes.table_metadata.table
     schema = changes.table_metadata.table_schema
+    primary_key = changes.table_metadata.primary_key
+
+    # we can only update columns that are not part of the primary key
+    modifiable_columns = [c for c in schema.columns if c not in primary_key]
 
     table_name = f"{table.db_schema}.{table.name}"
-    update_statements = ", ".join([f"{c} = :{c}" for c in schema.columns])
-    conditions = " AND ".join([f"{c} = :{c}" for c in schema.columns])
+    update_statements = ", ".join([f"{c} = :{c}" for c in modifiable_columns])
+    conditions = " AND ".join([f"{c} = :{c}" for c in primary_key])
 
     return f"UPDATE {table_name} SET {update_statements} WHERE {conditions}"
 

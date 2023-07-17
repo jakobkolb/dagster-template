@@ -38,12 +38,12 @@ from dagster_poc.utils.types import (
 
 
 @asset()
-def tracked_tables_at_origin_db(
-        source_db: DatabaseConnection,
-        # update_source_table
+def names_of_tables_with_cdc_enabled(
+    source_db: DatabaseConnection,
+    # update_source_table
 ) -> List[Table]:
     """
-    Change change_data table from origin.
+    Load all tables that have change data capture enabled.
     """
     engine = source_db.get_engine()
     db_name = source_db.get_db_name()
@@ -54,13 +54,16 @@ def tracked_tables_at_origin_db(
 
 @asset()
 def metadata_of_tracked_tables(
-    source_db: DatabaseConnection, tracked_tables_at_origin_db: List[Table]
+    source_db: DatabaseConnection, names_of_tables_with_cdc_enabled: List[Table]
 ) -> List[TrackedTableMetadata]:
     """
-    Log sequence numbers of tracked tables.
+    Metadata of tables that have change data tracking enabled including
+    * valid log sequence numbers for change data capture (LSN)
+    * primary key column names (if any)
+    * table schema (column names and types)
     """
     metadata = []
-    for table in tracked_tables_at_origin_db:
+    for table in names_of_tables_with_cdc_enabled:
         metadata.append(read_tracked_table_metadata(source_db, table))
     return metadata
 
@@ -71,6 +74,14 @@ def change_data_records_of_tracked_tables(
     source_db: DatabaseConnection,
     tables_metadata: List[TrackedTableMetadata],
 ) -> List[Changes]:
+    """
+    Change data records for all tables that have change data tracking enabled.
+    :param context: Dagster context to load table sync status
+    :param source_db: Database connection to source database
+    :param tables_metadata: Metadata of tables that have change data tracking enabled
+    :return: List of Changes objects that contain metadata and changes for each table
+    """
+
     table_sync_status = load_table_sync_status(context)
     changes = []
     for metadata in tables_metadata:
@@ -80,7 +91,9 @@ def change_data_records_of_tracked_tables(
             if next_min_lsn <= metadata.lsn_range.max_lsn:
                 metadata.lsn_range.min_lsn = next_min_lsn
                 print(f"Changes for table {metadata.table.name}")
-                print(f"between {decode_lsn(next_min_lsn)} and {decode_lsn(metadata.lsn_range.max_lsn)}")
+                print(
+                    f"between {decode_lsn(next_min_lsn)} and {decode_lsn(metadata.lsn_range.max_lsn)}"
+                )
             else:
                 print(f"No changes for table {metadata.table.name}")
                 metadata.lsn_range.min_lsn = metadata.lsn_range.max_lsn
@@ -93,9 +106,10 @@ def updated_sync_state(
     context, target_db: DatabaseConnection, changes: List[Changes]
 ) -> Output[None]:
     """
-    Load changes to target database
+    Load changes to target database and update the sync status for each table.
     """
     table_sync_status = load_table_sync_status(context)
+    max_synced_lsn = None
     for change in changes:
         last_synced_lsn = get_last_synced_lsn_for_table(
             table_sync_status, change.table_metadata
@@ -103,7 +117,7 @@ def updated_sync_state(
         try:
             sql_changes = construct_sql_changes(change)
             insert_sql_change_data(target_db, sql_changes)
-            print('synchronizing changes done.')
+            print("synchronizing changes done.")
             table_sync_status[change.table_metadata.table.name] = TableSyncStatus(
                 table=change.table_metadata.table.dict(),
                 last_sync_success=True,
@@ -113,7 +127,7 @@ def updated_sync_state(
                 last_sync_error=None,
                 last_synced_lsn=decode_lsn(change.table_metadata.lsn_range.max_lsn),
             ).dict()
-            print('creating sync status done.')
+            print("creating sync status done.")
         except Exception as e:
             table_sync_status[change.table_metadata.table.name] = TableSyncStatus(
                 table=change.table_metadata.table.dict(),
@@ -125,7 +139,10 @@ def updated_sync_state(
                 last_synced_lsn=last_synced_lsn,
             ).dict()
         max_synced_lsn = decode_lsn(change.table_metadata.lsn_range.max_lsn)
-    return Output(value=None, metadata={"table_sync_status": table_sync_status, "last_lsn": max_synced_lsn})
+    return Output(
+        value=None,
+        metadata={"table_sync_status": table_sync_status, "last_lsn": max_synced_lsn},
+    )
 
 
 def get_last_synced_lsn_for_table(table_sync_status, table_metadata):
@@ -135,6 +152,12 @@ def get_last_synced_lsn_for_table(table_sync_status, table_metadata):
 
 
 def load_table_sync_status(context):
+    """
+    Load the table sync status from the previous run.
+    If there is no previous run, return an empty dictionary.
+    :param context: Dagster run context
+    :return: Dict of Sync status for each table
+    """
     instance = context.instance
     try:
         materialization = instance.get_latest_materialization_event(
@@ -163,9 +186,9 @@ defs = Definitions(
     resources=resources,
     assets=[
         # update_source_table,
-        tracked_tables_at_origin_db,
+        names_of_tables_with_cdc_enabled,
         metadata_of_tracked_tables,
         change_data_records_of_tracked_tables,
         updated_sync_state,
-    ]
+    ],
 )

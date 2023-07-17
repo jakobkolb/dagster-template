@@ -1,10 +1,12 @@
 from dagster_poc.utils.database import (
     read_database_schema,
+    read_primary_key,
     load_lsn_range_for_table,
     discover_tracked_tables,
     read_net_change_data_capture_for_table,
     read_tracked_table_metadata,
     construct_insert_statement,
+    construct_update_statement,
     filter_change_data_for_operation,
     construct_sql_changes,
     insert_sql_change_data,
@@ -17,6 +19,7 @@ from dagster_poc.utils.types import TrackedTableMetadata, Changes, SQLChanges
 from dagster_poc.utils.types import Schema, Table, DatabaseConnection, LsnRange
 
 from time import sleep
+
 
 def test_database_fixture_has_tables_and_is_writable(database, tables):
     """
@@ -83,6 +86,34 @@ def test_read_database_schema_returns_column_names_and_types(db_context):
     assert schema == Schema(columns=["id", "name"], types=["int", "varchar"])
 
 
+def test_read_primary_key_returns_pk_column_name(db_context):
+    pk = read_primary_key(db_context.source_db, db_context.tables["source"])
+
+    assert pk == ["id"]
+
+
+def test_read_primary_key_returns_list_of_columns_for_tables_with_composite_keys(
+    db_context,
+):
+    # add a table with a composite key
+    db_context.source_db.insert(
+        """
+        CREATE TABLE common.composite_key (
+            id int,
+            name varchar(255),
+            PRIMARY KEY (id, name)
+        )
+        """
+    )
+
+    # read primary key
+    pk = read_primary_key(
+        db_context.source_db, Table(name="composite_key", db_schema="common")
+    )
+
+    assert pk == ["id", "name"]
+
+
 def test_read_tracked_table_metadata_returns_correct_metadata(db_context):
     metadata = read_tracked_table_metadata(
         db_context.source_db, db_context.tables["source"]
@@ -92,6 +123,7 @@ def test_read_tracked_table_metadata_returns_correct_metadata(db_context):
     assert metadata.table_schema == Schema(
         columns=["id", "name"], types=["int", "varchar"]
     )
+    assert metadata.primary_key == ["id"]
     assert metadata.lsn_range.min_lsn is not None
     assert metadata.lsn_range.max_lsn is None
 
@@ -134,6 +166,7 @@ def test_read_change_data_capture_from_source_db(db_context):
         table=table,
         lsn_range=load_lsn_range_for_table(connection, table),
         table_schema=read_database_schema(connection, table),
+        primary_key=read_primary_key(connection, table),
     )
 
     change_data = read_net_change_data_capture_for_table(
@@ -163,12 +196,56 @@ def test_construct_sql_statement_from_change_data_returns_correct_sql_statement_
                 max_lsn=b"\x00\x00\x00'\x00\x00\x02\xef\x00\x1c",
             ),
             table_schema=Schema(columns=["id", "name"], types=["int", "varchar"]),
+            primary_key=["id"],
         ),
     )
     sql_statement = construct_insert_statement(change_data)
 
     assert (
         sql_statement == "INSERT INTO common.change_data (id, name) VALUES (:id, :name)"
+    )
+
+
+def test_construct_sql_statement_from_change_data_returns_correct_sql_statement_for_update():
+    change_data = Changes(
+        changes=[(b"\x00\x00\x00'\x00\x00\x02\xef\x00\x1c", 4, None, 1, "test")],
+        table_metadata=TrackedTableMetadata(
+            table=Table(name="change_data", db_schema="common"),
+            lsn_range=LsnRange(
+                min_lsn=b"\x00\x00\x00\x00\x00\x00\x00\x00",
+                max_lsn=b"\x00\x00\x00'\x00\x00\x02\xef\x00\x1c",
+            ),
+            table_schema=Schema(columns=["id", "name"], types=["int", "varchar"]),
+            primary_key=["id"],
+        ),
+    )
+    sql_statement = construct_update_statement(change_data)
+
+    assert sql_statement == "UPDATE common.change_data SET name = :name WHERE id = :id"
+
+
+def test_construct_sql_statement_from_change_data_returns_correct_sql_statement_for_update_with_composite_key():
+    change_data = Changes(
+        changes=[
+            (b"\x00\x00\x00'\x00\x00\x02\xef\x00\x1c", 4, None, 1, "test", "data")
+        ],
+        table_metadata=TrackedTableMetadata(
+            table=Table(name="change_data", db_schema="common"),
+            lsn_range=LsnRange(
+                min_lsn=b"\x00\x00\x00\x00\x00\x00\x00\x00",
+                max_lsn=b"\x00\x00\x00'\x00\x00\x02\xef\x00\x1c",
+            ),
+            table_schema=Schema(
+                columns=["id", "name", "data"], types=["int", "varchar", "varchar"]
+            ),
+            primary_key=["id", "name"],
+        ),
+    )
+    sql_statement = construct_update_statement(change_data)
+
+    assert (
+        sql_statement
+        == "UPDATE common.change_data SET data = :data WHERE id = :id AND name = :name"
     )
 
 
@@ -182,6 +259,7 @@ def test_constructed_sql_statement_has_correct_parameters_for_insert():
                 max_lsn=b"\x00\x00\x00'\x00\x00\x02\xef\x00\x1c",
             ),
             table_schema=Schema(columns=["id", "name"], types=["int", "varchar"]),
+            primary_key=["id"],
         ),
     )
     sql_data = filter_change_data_for_operation(DML.INSERT, change_data)
@@ -325,7 +403,9 @@ def test_construct_sql_change_data_for_delete(db_context):
     tracked_table_metadata = read_tracked_table_metadata(source_connection, source)
 
     # set the new min_lsn to only select new changes. (otherwise we would get only one insert)
-    tracked_table_metadata.lsn_range.min_lsn = get_next_lsn(source_connection, old_tracked_table_metadata.lsn_range.max_lsn)
+    tracked_table_metadata.lsn_range.min_lsn = get_next_lsn(
+        source_connection, old_tracked_table_metadata.lsn_range.max_lsn
+    )
 
     # read change change_data capture from source db
     change_data = read_net_change_data_capture_for_table(
@@ -334,14 +414,13 @@ def test_construct_sql_change_data_for_delete(db_context):
 
     sql_change_data = construct_sql_changes(change_data)
 
-    assert sql_change_data['delete'] == SQLChanges(
-            sql="DELETE FROM common.change_data WHERE id = :id AND name = :name",
-            change_data=[{"id": 1, "name": "test"}],
-        )
+    assert sql_change_data["delete"] == SQLChanges(
+        sql="DELETE FROM common.change_data WHERE id = :id AND name = :name",
+        change_data=[{"id": 1, "name": "test"}],
+    )
 
 
 def test_bytes_conversion(db_context):
-
     connection = db_context.source_db
     table = db_context.tables["source"]
 
