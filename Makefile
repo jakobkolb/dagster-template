@@ -1,5 +1,5 @@
 #!make
--include .env
+-include .env.dev
 export $(shell sed 's/=.*//' .env)
 
 install:
