@@ -1,3 +1,5 @@
+from time import sleep
+
 import pytest
 import sqlalchemy
 from typing import TypedDict
@@ -120,3 +122,34 @@ def resources(database, tables: Tables) -> Resources:
             connection_string=connection_string, db_name=target_db_name
         ),
     }
+
+
+def cdc_scan(db_connection):
+    success = False
+    while not success:
+        try:
+            db_connection.insert("EXEC sys.sp_cdc_scan")
+            success = True
+        except Exception:
+            sleep(1)
+
+
+def prepare_db(resources: Resources, source_table: Table, data=[(1, "test")]):
+    database = resources["source_db"]
+
+    sql_data = ','.join([f"({row[0]}, '{row[1]}')" for row in data])
+
+    # insert data into source table
+    database.insert(
+        f"""
+        INSERT INTO {source_table.db_schema}.{source_table.name} VALUES {sql_data}
+        """
+    )
+
+    # assert data is inserted
+    assert database.query(
+        f"SELECT * FROM {source_table.db_schema}.{source_table.name}"
+    ) == data
+
+    # trigger cdc scan
+    cdc_scan(database)

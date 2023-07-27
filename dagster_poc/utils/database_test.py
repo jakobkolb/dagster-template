@@ -3,6 +3,7 @@ from dagster_poc.utils.database import (
     read_primary_key,
     load_lsn_range_for_table,
     discover_tracked_tables,
+    read_net_number_of_change_data_capture_for_table,
     read_net_change_data_capture_for_table,
     read_tracked_table_metadata,
     construct_insert_statement,
@@ -15,9 +16,9 @@ from dagster_poc.utils.database import (
     encode_lsn,
     decode_lsn,
 )
-from dagster_poc.utils.types import TrackedTableMetadata, Changes, SQLChanges
+from dagster_poc.utils.types import TrackedTableMetadata, Changes, SQLChanges, Resources
 from dagster_poc.utils.types import Schema, Table, DatabaseConnection, LsnRange
-
+from dagster_poc.conftest import prepare_db
 from time import sleep
 
 
@@ -78,6 +79,27 @@ def test_read_lsn_range_returns_lsn_range_when_changes_have_been_made(db_context
 
     assert lsn_range.min_lsn is not None
     assert lsn_range.max_lsn is not None
+
+
+def test_read_number_of_changes_returns_correct_number_of_changes(db_context):
+
+    table: Table = db_context.tables["source"]
+    connection = db_context.source_db
+
+    # add some change_data to the source table
+    connection.insert(f"INSERT INTO {table.db_schema}.{table.name} VALUES (1, 'test')")
+    connection.insert(f"INSERT INTO {table.db_schema}.{table.name} VALUES (2, 'test')")
+    connection.insert(f"INSERT INTO {table.db_schema}.{table.name} VALUES (3, 'test')")
+
+    # trigger change change_data capture job manually
+    connection.insert("EXEC sys.sp_cdc_scan")
+
+    metadata = read_tracked_table_metadata(connection, table)
+
+    # read change change_data capture
+    n_changes = read_net_number_of_change_data_capture_for_table(connection, metadata)
+
+    assert n_changes == 3
 
 
 def test_read_database_schema_returns_column_names_and_types(db_context):
@@ -184,6 +206,29 @@ def test_read_change_data_capture_from_source_db(db_context):
 
     # the first entry in the row is the max lsn (since we only made one change)
     assert changed_rows[0][0] == tracked_table_metadata.lsn_range.max_lsn
+
+
+def test_read_change_data_with_offset(resources: Resources, source_table: Table, target_table: Table):
+
+    data = [(i, f'test{i}') for i in range(1, 100)]
+
+    prepare_db(resources, source_table, data)
+
+    # read source table metadata
+    metadata = read_tracked_table_metadata(resources['source_db'], source_table)
+
+    # read first 10 rows
+    change_data = read_net_change_data_capture_for_table(resources['source_db'], metadata, offset=0,  batch_size=10)
+
+    assert [row[-2:] for row in change_data.changes] == data[:10]
+
+    # read next 10 rows
+    change_data = read_net_change_data_capture_for_table(resources['source_db'], metadata, offset=10,  batch_size=10)
+
+    assert [row[-2:] for row in change_data.changes] == data[10:20]
+
+
+
 
 
 def test_construct_sql_statement_from_change_data_returns_correct_sql_statement_for_insert():

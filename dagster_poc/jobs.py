@@ -3,6 +3,7 @@ from typing import List
 from dagster_poc.utils.database import (
     read_tracked_table_metadata,
     discover_tracked_tables,
+    read_net_number_of_change_data_capture_for_table,
     read_net_change_data_capture_for_table,
     construct_sql_changes,
     insert_sql_change_data,
@@ -12,11 +13,13 @@ from dagster_poc.utils.database import (
 )
 from dagster_poc.utils.types import (
     Table,
-    Changes,
     DatabaseConnection,
     TrackedTableMetadata,
     TableSyncStatus,
 )
+
+
+BATCH_SIZE = 10000
 
 
 # @asset
@@ -69,80 +72,98 @@ def metadata_of_tracked_tables(
 
 
 @asset(ins={"tables_metadata": AssetIn(key="metadata_of_tracked_tables")})
-def change_data_records_of_tracked_tables(
-    context,
-    source_db: DatabaseConnection,
-    tables_metadata: List[TrackedTableMetadata],
-) -> List[Changes]:
-    """
-    Change data records for all tables that have change data tracking enabled.
-    :param context: Dagster context to load table sync status
-    :param source_db: Database connection to source database
-    :param tables_metadata: Metadata of tables that have change data tracking enabled
-    :return: List of Changes objects that contain metadata and changes for each table
-    """
-
-    table_sync_status = load_table_sync_status(context)
-    changes = []
-    for metadata in tables_metadata:
-        last_synced_lsn = get_last_synced_lsn_for_table(table_sync_status, metadata)
-        if last_synced_lsn is not None:
-            next_min_lsn = get_next_lsn(source_db, encode_lsn(last_synced_lsn))
-            if next_min_lsn <= metadata.lsn_range.max_lsn:
-                metadata.lsn_range.min_lsn = next_min_lsn
-                print(f"Changes for table {metadata.table.name}")
-                print(
-                    f"between {decode_lsn(next_min_lsn)} and {decode_lsn(metadata.lsn_range.max_lsn)}"
-                )
-            else:
-                print(f"No changes for table {metadata.table.name}")
-                metadata.lsn_range.min_lsn = metadata.lsn_range.max_lsn
-        changes.append(read_net_change_data_capture_for_table(source_db, metadata))
-    return changes
-
-
-@asset(ins={"changes": AssetIn(key="change_data_records_of_tracked_tables")})
-def updated_sync_state(
-    context, target_db: DatabaseConnection, changes: List[Changes]
+def iterative_updated_sync_state(
+        context,
+        source_db: DatabaseConnection,
+        target_db: DatabaseConnection,
+        tables_metadata: List[TrackedTableMetadata],
 ) -> Output[None]:
-    """
-    Load changes to target database and update the sync status for each table.
-    """
     table_sync_status = load_table_sync_status(context)
-    max_synced_lsn = None
-    for change in changes:
-        last_synced_lsn = get_last_synced_lsn_for_table(
-            table_sync_status, change.table_metadata
-        )
-        try:
-            sql_changes = construct_sql_changes(change)
-            insert_sql_change_data(target_db, sql_changes)
-            print("synchronizing changes done.")
-            table_sync_status[change.table_metadata.table.name] = TableSyncStatus(
-                table=change.table_metadata.table.dict(),
-                last_sync_success=True,
-                synchronized_inserts=len(sql_changes["insert"].change_data),
-                synchronized_updates=len(sql_changes["update"].change_data),
-                synchronized_deletes=len(sql_changes["delete"].change_data),
-                last_sync_error=None,
-                last_synced_lsn=decode_lsn(change.table_metadata.lsn_range.max_lsn),
-            ).dict()
-            print("creating sync status done.")
-        except Exception as e:
-            table_sync_status[change.table_metadata.table.name] = TableSyncStatus(
-                table=change.table_metadata.table.dict(),
-                last_sync_success=False,
-                synchronized_inserts=0,
-                synchronized_updates=0,
-                synchronized_deletes=0,
-                last_sync_error=str(e),
-                last_synced_lsn=last_synced_lsn,
-            ).dict()
-        max_synced_lsn = decode_lsn(change.table_metadata.lsn_range.max_lsn)
+
+    for metadata in tables_metadata:
+        # get last synced lsn for table and update metadata
+        last_synced_lsn = get_last_synced_lsn_for_table(table_sync_status, metadata)
+        metadata.lsn_range.min_lsn = get_next_min_lsn_for_table(source_db, metadata, last_synced_lsn)
+
+        # batch sync changes to table
+        synced_inserts, synced_updates, synced_deletes = sync_changes(source_db, target_db, metadata, BATCH_SIZE)
+
+        # update table sync status
+        table_sync_status[metadata.table.name] = TableSyncStatus(
+            table=metadata.table.dict(),
+            last_sync_success=True,
+            synchronized_inserts=synced_inserts,
+            synchronized_updates=synced_updates,
+            synchronized_deletes=synced_deletes,
+            last_sync_error=None,
+            last_synced_lsn=decode_lsn(metadata.lsn_range.max_lsn),
+        ).dict()
+
     return Output(
         value=None,
-        metadata={"table_sync_status": table_sync_status, "last_lsn": max_synced_lsn},
+        metadata={"table_sync_status": table_sync_status},
     )
+
+
+def sync_changes(source_db, target_db, metadata, batch_size):
+
+    # get number of changes for table
+    number_of_changes = read_net_number_of_change_data_capture_for_table(
+        source_db, metadata
+    )
+
+    # initialize counters
+    synced_changes = 0
+    synced_inserts = 0
+    synced_updates = 0
+    synced_deletes = 0
+
+    # while there are still changes to sync:
+    while synced_changes < number_of_changes:
+        print(f'syncing between {synced_changes} and {synced_changes + batch_size}')
+        # read a batch of changes
+        changes = read_net_change_data_capture_for_table(
+            source_db, metadata, synced_changes, batch_size
+        )
+
+        # construct sql changes
+        sql_changes = construct_sql_changes(changes)
+
+        # insert sql changes into target db
+        insert_sql_change_data(target_db, sql_changes)
+
+        # update counters
+        synced_changes += batch_size
+        synced_inserts += len(sql_changes["insert"].change_data)
+        synced_updates += len(sql_changes["update"].change_data)
+        synced_deletes += len(sql_changes["delete"].change_data)
+
+    return synced_inserts, synced_updates, synced_deletes
+
+
+def get_next_min_lsn_for_table(source_db: DatabaseConnection, metadata: TrackedTableMetadata, last_synced_lsn):
+    """
+    get the next min lsn for a table
+    :param source_db:
+    :param metadata:
+    :param last_synced_lsn:
+    :return: next_lsn
+    """
+
+    # if last_synced_lsn is None (this is the first sync):
+    if last_synced_lsn is None:
+        # use the min lsn from the metadata
+        return metadata.lsn_range.min_lsn
+    # else, if there was a previous sync:
+    else:
+        # increment the last synced lsn by 1
+        next_min_lsn = get_next_lsn(source_db, encode_lsn(last_synced_lsn))
+        # if this is greater than the max lsn from the metadata:
+        if next_min_lsn > metadata.lsn_range.max_lsn:
+            # set the min lsn to the max lsn
+            print(f"No changes for table {metadata.table.name}")
+            next_min_lsn = metadata.lsn_range.max_lsn
+        return next_min_lsn
 
 
 def get_last_synced_lsn_for_table(table_sync_status, table_metadata):
@@ -161,7 +182,7 @@ def load_table_sync_status(context):
     instance = context.instance
     try:
         materialization = instance.get_latest_materialization_event(
-            AssetKey(["updated_sync_state"])
+            AssetKey(["iterative_updated_sync_state"])
         ).asset_materialization
         previous_table_sync_status = materialization.metadata["table_sync_status"]
         if previous_table_sync_status is None:
@@ -188,7 +209,6 @@ defs = Definitions(
         # update_source_table,
         names_of_tables_with_cdc_enabled,
         metadata_of_tracked_tables,
-        change_data_records_of_tracked_tables,
-        updated_sync_state,
+        iterative_updated_sync_state,
     ],
 )

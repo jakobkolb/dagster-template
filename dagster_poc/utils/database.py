@@ -104,9 +104,27 @@ def get_next_lsn(connection: DatabaseConnection, lsn: bytes) -> bytes:
     ][0]
 
 
+def read_net_number_of_change_data_capture_for_table(
+    connection: DatabaseConnection, metadata: TrackedTableMetadata
+) -> int:
+    query = f"""
+            SELECT
+                COUNT_BIG(*) AS number_of_changes
+            FROM
+                cdc.fn_cdc_get_net_changes_{metadata.table.db_schema}_{metadata.table.name}
+                (:min_lsn, :max_lsn, 'all with mask')
+            """
+    params = {
+        "min_lsn": metadata.lsn_range.min_lsn,
+        "max_lsn": metadata.lsn_range.max_lsn,
+    }
+    return connection.query(query, params)[0][0]
+
+
 def read_net_change_data_capture_for_table(
-    connection: DatabaseConnection, tracked_table_metadata: TrackedTableMetadata
+    connection: DatabaseConnection, tracked_table_metadata: TrackedTableMetadata, offset: int = 0, batch_size: int = 1000
 ) -> Changes:
+    print(f'offset is {offset}')
     # read net changes to the source table
     query = f"""
             SELECT
@@ -114,10 +132,17 @@ def read_net_change_data_capture_for_table(
             FROM
                 cdc.fn_cdc_get_net_changes_{tracked_table_metadata.table.db_schema}_{tracked_table_metadata.table.name}
                 (:min_lsn, :max_lsn, 'all with mask')
+            ORDER BY
+                __$start_lsn DESC, :primary_key ASC 
+            OFFSET :offset ROWS
+            FETCH NEXT :batch_size ROWS ONLY
             """
     params = {
         "min_lsn": tracked_table_metadata.lsn_range.min_lsn,
         "max_lsn": tracked_table_metadata.lsn_range.max_lsn,
+        "primary_key": R.join(', ', tracked_table_metadata.primary_key),
+        "batch_size": batch_size,
+        "offset": offset,
     }
     if (
         tracked_table_metadata.lsn_range.min_lsn

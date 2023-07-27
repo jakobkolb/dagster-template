@@ -1,14 +1,13 @@
+from dagster_poc.conftest import cdc_scan, prepare_db
 from dagster_poc.jobs import (
     names_of_tables_with_cdc_enabled,
     metadata_of_tracked_tables,
-    change_data_records_of_tracked_tables,
-    updated_sync_state,
+    iterative_updated_sync_state
 )
 import os
 from dagster_poc.utils.types import Table, DatabaseConnection, Resources
 from dagster import materialize, DagsterInstance, AssetKey
 from sqlalchemy.engine import Engine
-from time import sleep
 
 
 def test_names_of_tables_with_cdc_enabled_returns_tracked_tables(
@@ -50,46 +49,18 @@ def test_reading_log_sequence_numbers_for_tracked_tables(
     )
 
 
-def test_reading_change_data_records_for_tracked_tables(
-    resources: Resources, source_table: Table
-):
-    prepare_db(resources, source_table)
-
-    result = materialize(
-        [
-            names_of_tables_with_cdc_enabled,
-            metadata_of_tracked_tables,
-            change_data_records_of_tracked_tables,
-        ],
-        resources=resources,
-    )
-    assert result.success
-
-    change_records = result.output_for_node("change_data_records_of_tracked_tables")
-
-    # we have change records for one table
-    assert len(change_records) == 1
-    assert change_records[0] is not None
-
-    record = change_records[0]
-
-    # we have change records for one row
-    assert len(record.changes) == 1
-
-    # changes are equal to the row we inserted
-    assert record.changes[0][-2:] == (1, "test")
-
-
-def test_db_sync(
+def test_db_sync_first(
     resources: Resources, target_table: Table, source_table: Table, tmp_path
 ):
     os.environ["DAGSTER_HOME"] = str(tmp_path)
 
+    data = [(i, f'test{i}') for i in range(1, 100)]
+
     # prepare source database
-    prepare_db(resources, source_table)
+    prepare_db(resources, source_table, data)
 
     # run sync
-    sync(resources, source_table, target_table)
+    sync(resources)
 
     # assert that both databases are in sync
     assert_databases_are_in_sync(resources, source_table, target_table)
@@ -100,10 +71,10 @@ def test_repeated_db_sync(
 ):
     os.environ["DAGSTER_HOME"] = str(tmp_path)
 
-    prepare_db(resources, source_table)
+    prepare_db(resources, source_table, [(i, f'test{i}') for i in range(1, 100)])
 
     # run sync
-    sync(resources, source_table, target_table)
+    sync(resources)
 
     # assert that both databases are in sync
     assert_databases_are_in_sync(resources, source_table, target_table)
@@ -111,15 +82,15 @@ def test_repeated_db_sync(
     # insert new row to source database
     resources["source_db"].insert(
         f"""
-        INSERT INTO {source_table.db_schema}.{source_table.name} VALUES (3, 'test3')
+        INSERT INTO {source_table.db_schema}.{source_table.name} VALUES (102, 'test102')
         """
     )
 
     # trigger cdc scan
-    resources["source_db"].insert("EXEC sys.sp_cdc_scan")
+    cdc_scan(resources["source_db"])
 
     # run sync
-    sync(resources, source_table, target_table)
+    sync(resources)
 
     # assert that both databases are in sync
     assert_databases_are_in_sync(resources, source_table, target_table)
@@ -130,17 +101,12 @@ def test_db_sync_with_deleted_rows(
 ):
     os.environ["DAGSTER_HOME"] = str(tmp_path)
 
-    resources["source_db"].insert(
-        f"INSERT INTO {source_table.db_schema}.{source_table.name} VALUES (1, 'test'), (2, 'test2')"
-    )
-
-    # trigger cdc scan
-    resources["source_db"].insert("EXEC sys.sp_cdc_scan")
-    sleep(1)
+    # insert new rows to source database
+    prepare_db(resources, source_table, [(i, f'test{i}') for i in range(1, 100)])
 
     # run sync
     print("sync first round of changes")
-    sync(resources, source_table, target_table)
+    sync(resources)
 
     # assert that both databases are in sync
     assert_databases_are_in_sync(resources, source_table, target_table)
@@ -153,12 +119,11 @@ def test_db_sync_with_deleted_rows(
     )
 
     # trigger cdc scan
-    resources["source_db"].insert("EXEC sys.sp_cdc_scan")
-    sleep(1)
+    cdc_scan(resources["source_db"])
 
     print("sync second round of changes")
     # run sync
-    sync(resources, source_table, target_table)
+    sync(resources)
 
     # assert that both databases are in sync
     assert_databases_are_in_sync(resources, source_table, target_table)
@@ -170,19 +135,11 @@ def test_db_sync_with_updated_rows(
     os.environ["DAGSTER_HOME"] = str(tmp_path)
 
     # insert new rows to source database
-    resources["source_db"].insert(
-        f"""
-        INSERT INTO {source_table.db_schema}.{source_table.name} VALUES (1, 'test'), (2, 'test2')
-        """
-    )
-
-    # trigger cdc scan
-    resources["source_db"].insert("EXEC sys.sp_cdc_scan")
-    sleep(1)
+    prepare_db(resources, source_table, [(i, f'test{i}') for i in range(1, 100)])
 
     # run sync
     print("sync first round of changes")
-    sync(resources, source_table, target_table)
+    sync(resources)
 
     # assert that both databases are in sync
     assert_databases_are_in_sync(resources, source_table, target_table)
@@ -195,12 +152,11 @@ def test_db_sync_with_updated_rows(
     )
 
     # trigger cdc scan
-    resources["source_db"].insert("EXEC sys.sp_cdc_scan")
-    sleep(1)
+    cdc_scan(resources["source_db"])
 
     print("sync second round of changes")
     # run sync
-    sync(resources, source_table, target_table)
+    sync(resources)
 
     # assert that both databases are in sync
     assert_databases_are_in_sync(resources, source_table, target_table)
@@ -219,15 +175,14 @@ def assert_databases_are_in_sync(
     assert source_values == target_values
 
 
-def sync(resources, source_table, target_table):
+def sync(resources):
     # run initial sync
     with DagsterInstance.get() as instance:
         result = materialize(
             [
                 names_of_tables_with_cdc_enabled,
                 metadata_of_tracked_tables,
-                change_data_records_of_tracked_tables,
-                updated_sync_state,
+                iterative_updated_sync_state,
             ],
             resources=resources,
             instance=instance,
@@ -235,7 +190,7 @@ def sync(resources, source_table, target_table):
 
         # get metadata for updated_sync_state from instance
         materialization = instance.get_latest_materialization_event(
-            AssetKey(["updated_sync_state"])
+            AssetKey(["iterative_updated_sync_state"])
         ).asset_materialization
         sync_status = materialization.metadata["table_sync_status"].value
 
@@ -245,21 +200,3 @@ def sync(resources, source_table, target_table):
     assert sync_status["change_data"]["last_synced_lsn"] is not None
 
 
-def prepare_db(resources: Resources, source_table: Table):
-    database = resources["source_db"]
-
-    # insert data into source table
-    database.insert(
-        f"""
-        INSERT INTO {source_table.db_schema}.{source_table.name} VALUES (1, 'test')
-        """
-    )
-
-    # assert data is inserted
-    assert database.query(
-        f"SELECT * FROM {source_table.db_schema}.{source_table.name}"
-    ) == [(1, "test")]
-
-    # trigger cdc scan
-    database.insert("EXEC sys.sp_cdc_scan")
-    sleep(2)
